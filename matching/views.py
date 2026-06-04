@@ -1,7 +1,9 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework import status
 from .models import MatchResult
+from documents.models import Proposal  # تم إضافة الـ Import الخاص بموديل المقترحات
 from .serializers import MatchResultSerializer, ProposalRequestSerializer
 from .match import get_ai_match, generate_ai_proposal
 from opportunities.models import Job, FreelanceProject
@@ -109,28 +111,28 @@ class ProjectMatchView(APIView):
                 "traceback": traceback.format_exc()
             }, status=500)
 
-# 3. API لتوليد مقترح (Proposal)
+# 3. API لتوليد مقترح (Proposal) وحفظه بالداتابيز
 class ProposalGeneratorView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
         request=ProposalRequestSerializer,
-        responses={200: {"type": "object", "properties": {"proposal": {"type": "string"}}}}
+        responses={201: {"type": "object", "properties": {"id": {"type": "integer"}, "proposal": {"type": "string"}, "status": {"type": "string"}}}}
     )
     def post(self, request):
         user = request.user
         project_id = request.data.get('project_id')
         
         if not project_id:
-            return Response({"error": "project_id is required"}, status=400)
+            return Response({"error": "project_id is required"}, status=status.HTTP_400_BAD_REQUEST)
             
         try:
             project = FreelanceProject.objects.get(id=project_id)
         except FreelanceProject.DoesNotExist:
-            return Response({"error": "Project not found"}, status=404)
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
             
         if not hasattr(user, 'profile'):
-            return Response({"error": "Please complete your profile first (UserProfile missing)"}, status=400)
+            return Response({"error": "Please complete your profile first (UserProfile missing)"}, status=status.HTTP_400_BAD_REQUEST)
             
         profile_data = {
             "skills": [s.name for s in user.profile.skills.all()],
@@ -138,5 +140,20 @@ class ProposalGeneratorView(APIView):
             "full_name": getattr(user.profile, 'full_name', '') or ''
         }
         
+        # توليد مقترح الـ AI
         proposal_text = generate_ai_proposal(profile_data, project.description)
-        return Response({"proposal": proposal_text})
+        
+        # الحفظ الفعلي داخل الداتابيز وربطه بالمستخدم والمشروع الحالي
+        saved_proposal = Proposal.objects.create(
+            user=user,
+            project=project,
+            content=proposal_text,
+            status='sent'
+        )
+        
+        # إرجاع رد يحمل الـ ID والبيانات المحفوظة لتسهيل استخدامها في بقية الـ Endpoints
+        return Response({
+            "id": saved_proposal.id,
+            "proposal": saved_proposal.content,
+            "status": saved_proposal.status
+        }, status=status.HTTP_201_CREATED)

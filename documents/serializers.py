@@ -113,6 +113,30 @@ class CVSerializer(serializers.ModelSerializer):
         }
 
     def to_internal_value(self, data):
+        new_data = data.copy()
+        
+        # لو فيه Personal Details مبعوتة، هنترجم الخانات اللي جواها بس
+        if "Personal Details" in data:
+            personal = data.get("Personal Details", {})
+            
+            # بنقرأ اللي مبعوت بس، ومبنحطش ديفولت نص فاضي "" لو الخانة مش موجودة عشان متتمسحش
+            if "Full Name" in personal: new_data['full_name'] = personal["Full Name"]
+            if "Phone Number" in personal: new_data['phone_number'] = personal["Phone Number"]
+            if "Professional Title" in personal: new_data['professional_title'] = personal["Professional Title"]
+            if "Email Address" in personal: new_data['email_address'] = personal["Email Address"]
+            if "Location" in personal: new_data['location'] = personal["Location"]
+            if "Portfolio / LinkedIn URL" in personal: new_data['portfolio_url'] = personal["Portfolio / LinkedIn URL"]
+            if "Professional Summary" in personal: new_data['professional_summary'] = personal["Professional Summary"]
+        
+        # تظبيط العلاقات المتداخلة كالعادة
+        if "Experience" in data:
+            new_data['experiences'] = data.get("Experience")
+        if "Education" in data:
+            new_data['education_history'] = data.get("Education")
+        if "Skills" in data:
+            new_data['skills'] = data.get("Skills")
+            
+        return super().to_internal_value(new_data)
         # تحويل الـ Request المتداخل لـ Flat fields عشان الموديل يفهمها
         personal = data.get("Personal Details", data)
         
@@ -159,6 +183,38 @@ class CVSerializer(serializers.ModelSerializer):
         return cv
 
     def update(self, instance, validated_data):
+        experiences_data = validated_data.pop('experiences', None)
+        education_data = validated_data.pop('education_history', None)
+        skills_data = validated_data.pop('skills', None)
+        
+        # هنا بنضمن التعديل الجزئي (PATCH) بشكل يدوي وصارم للـ Flat Fields
+        # الـ .get بياخد القيمة الجديدة، ولو مش موجودة بياخد القيمة القديمة اللي موجودة في الـ instance علطول
+        instance.full_name = validated_data.get('full_name', instance.full_name)
+        instance.phone_number = validated_data.get('phone_number', instance.phone_number)
+        instance.professional_title = validated_data.get('professional_title', instance.professional_title)
+        instance.email_address = validated_data.get('email_address', instance.email_address)
+        instance.location = validated_data.get('location', instance.location)
+        instance.portfolio_url = validated_data.get('portfolio_url', instance.portfolio_url)
+        instance.professional_summary = validated_data.get('professional_summary', instance.professional_summary)
+        instance.content = validated_data.get('content', instance.content)
+        
+        instance.save()
+        
+        # تحديث العلاقات المتداخلة لو مبعوتة
+        if experiences_data is not None:
+            instance.experiences.all().delete()
+            for exp in experiences_data:
+                CVExperience.objects.create(cv=instance, **exp)
+                
+        if education_data is not None:
+            instance.education_history.all().delete()
+            for edu in education_data:
+                CVEducation.objects.create(cv=instance, **edu)
+                
+        if skills_data is not None:
+            instance.skills.set(skills_data)
+            
+        return instance
         experiences_data = validated_data.pop('experiences', None)
         education_data = validated_data.pop('education_history', None)
         skills_data = validated_data.pop('skills', None)
